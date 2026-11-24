@@ -23,9 +23,11 @@ if [ -z "${OPENPOST_APP_URL:-}" ]; then
 fi
 export OPENPOST_APP_URL="${OPENPOST_APP_URL%/}"
 export OPENPOST_PUBLIC_URL="${OPENPOST_PUBLIC_URL:-$OPENPOST_APP_URL}"
-# Railway's edge proxy reaches the service from its private ranges; trust only
-# those so the real client IP (rate limits) and https (Secure cookies) are seen.
-export OPENPOST_TRUSTED_PROXY_CIDRS="${OPENPOST_TRUSTED_PROXY_CIDRS:-100.64.0.0/10,fd00::/8}"
+# Railway's edge replaces any client-sent X-Forwarded-For with
+# "<visitor>, <CDN hop 152.233.x.x>" and connects from 100.64.0.0/10. Trust
+# exactly those hops so OpenPost sees the visitor's IP (per-IP login rate
+# limits) and https (Secure cookies).
+export OPENPOST_TRUSTED_PROXY_CIDRS="${OPENPOST_TRUSTED_PROXY_CIDRS:-100.64.0.0/10,152.233.0.0/16,fd00::/8}"
 # Maintainer diagnostics to app.openpo.st stay off unless the deployer opts in.
 export OPENPOST_DIAGNOSTICS_ENABLED="${OPENPOST_DIAGNOSTICS_ENABLED:-false}"
 # The admin is created below; afterwards nobody else can sign up unless the
