@@ -64,7 +64,7 @@ log "cpus=$cpus GOMAXPROCS=$GOMAXPROCS GOMEMLIMIT=${GOMEMLIMIT:-unset} url=$OPEN
 mkdir -p "$DATA/db" "$DATA/media"
 find "$DATA" \( ! -user openpost -o ! -group openpost \) -exec chown openpost:openpost {} + 2>/dev/null || true
 
-run() { su-exec openpost:openpost /app/openpost "$@"; }
+run() { su -p -s /bin/sh -c "exec /app/openpost $*" openpost; }
 
 # ---- first-boot admin -------------------------------------------------------
 MARK="$DATA/.railway-admin-created"
@@ -78,23 +78,30 @@ if [ ! -f "$MARK" ]; then
   OPENPOST_PORT=$bport OPENPOST_DISABLE_REGISTRATIONS=true run all > /tmp/bootstrap.log 2>&1 &
   bpid=$!
   i=0
-  until curl -fsS "http://127.0.0.1:$bport/api/v1/ready" >/dev/null 2>&1; do
+  until wget -q -T 3 -O /dev/null "http://127.0.0.1:$bport/api/v1/ready" 2>/dev/null; do
     i=$((i+1))
     if ! kill -0 "$bpid" 2>/dev/null || [ $i -gt 180 ]; then
       log "OpenPost did not start for the admin bootstrap:"; tail -n 40 /tmp/bootstrap.log; exit 1
     fi
     sleep 1
   done
-  body=$(jq -nc --arg e "$email" --arg p "$pass" '{email:$e,password:$p}')
-  code=$(printf %s "$body" | curl -sS -o /tmp/register.json -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @- "http://127.0.0.1:$bport/api/v1/auth/register" || echo 000)
-  case "$code" in
+  esc() { printf %s "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+  umask 077
+  printf '{"email":"%s","password":"%s"}' "$(esc "$email")" "$(esc "$pass")" > /tmp/register-body.json
+  set +e
+  wget -q -S -T 30 -O /tmp/register.json --header 'Content-Type: application/json' \
+    --post-file /tmp/register-body.json "http://127.0.0.1:$bport/api/v1/auth/register" 2>/tmp/register.hdr
+  set -e
+  rm -f /tmp/register-body.json; umask 022
+  code=$(grep -o 'HTTP/1\.[01] [0-9][0-9][0-9]' /tmp/register.hdr | tail -n 1 | cut -d' ' -f2)
+  case "${code:-000}" in
     200|201)
-      if jq -e '.user.is_admin == true' /tmp/register.json >/dev/null 2>&1; then log "admin account created for $email"
+      if grep -q '"is_admin":true' /tmp/register.json; then log "admin account created for $email"
       else log "account created but it is not the instance admin (an account already existed)"; fi ;;
     403|409) log "an account already exists (HTTP $code); not creating another admin" ;;
-    *) log "admin bootstrap failed (HTTP $code):"; jq -r '.detail // .title // .' /tmp/register.json 2>/dev/null | head -5; kill "$bpid" 2>/dev/null; exit 1 ;;
+    *) log "admin bootstrap failed (HTTP ${code:-none}):"; cat /tmp/register.hdr | tail -n 3; tail -n 20 /tmp/bootstrap.log; kill "$bpid" 2>/dev/null; exit 1 ;;
   esac
-  rm -f /tmp/register.json
+  rm -f /tmp/register.json /tmp/register.hdr
   kill -TERM "$bpid" 2>/dev/null || true
   wait "$bpid" 2>/dev/null || true
   touch "$MARK"; chown openpost:openpost "$MARK"
