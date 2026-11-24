@@ -64,7 +64,8 @@ log "cpus=$cpus GOMAXPROCS=$GOMAXPROCS GOMEMLIMIT=${GOMEMLIMIT:-unset} url=$OPEN
 mkdir -p "$DATA/db" "$DATA/media"
 find "$DATA" \( ! -user openpost -o ! -group openpost \) -exec chown openpost:openpost {} + 2>/dev/null || true
 
-run() { su -p -s /bin/sh -c "exec /app/openpost $*" openpost; }
+# BusyBox su execs the shell, which execs OpenPost, so $! below is OpenPost itself.
+AS_OPENPOST="su -p -s /bin/sh openpost -c"
 
 # ---- first-boot admin -------------------------------------------------------
 MARK="$DATA/.railway-admin-created"
@@ -75,7 +76,7 @@ if [ ! -f "$MARK" ]; then
   fi
   bport=18080
   log "first boot: creating the admin account on private port $bport"
-  OPENPOST_PORT=$bport OPENPOST_DISABLE_REGISTRATIONS=true run all > /tmp/bootstrap.log 2>&1 &
+  OPENPOST_PORT=$bport OPENPOST_DISABLE_REGISTRATIONS=true $AS_OPENPOST "exec /app/openpost all" > /tmp/bootstrap.log 2>&1 &
   bpid=$!
   i=0
   until wget -q -T 3 -O /dev/null "http://127.0.0.1:$bport/api/v1/ready" 2>/dev/null; do
@@ -109,7 +110,7 @@ fi
 
 # ---- run --------------------------------------------------------------------
 stopping=0
-run all &
+$AS_OPENPOST "exec /app/openpost all" &
 pid=$!
 trap 'stopping=1; kill -TERM "$pid" 2>/dev/null' TERM INT
 set +e
